@@ -10,9 +10,10 @@ import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"   # TensorFlow workaround
 import tensorflow as tf
 from tensorflow.keras.preprocessing.sequence import pad_sequences # type:ignore
-from db_connection import get_cursor, commit
+from db_connection import get_cursor, commit , get_connection 
 load_dotenv()
 import traceback
+
 # ----------------------------------------
 # Flask app initialization
 # ----------------------------------------
@@ -90,14 +91,23 @@ def complete_pipeline(review: str, max_length=MAX_LENGTH) -> dict:
 def save_review_with_absa(review, summary, overall_sentiment, aspects):
     cursor = get_cursor()
     try:
-        # Insert review
-        cursor.execute("""
-            INSERT INTO reviews (review_text, summarized_review, sentiment)
-            VALUES (%s, %s, %s)
-        """, (review, summary, overall_sentiment))
-        review_id = cursor.lastrowid
+        # Step 1: Check if the review already exists
+        cursor.execute("SELECT id FROM reviews WHERE review_text = %s", (review,))
+        existing = cursor.fetchone()
 
-        # Insert ABSA aspects
+        if existing:
+            review_id = existing["id"]
+            print(f"[INFO] Review already exists (id={review_id}). Linking ABSA results.")
+        else:
+            # Step 2: Insert new review
+            cursor.execute("""
+                INSERT INTO reviews (review_text, summarized_review, sentiment)
+                VALUES (%s, %s, %s)
+            """, (review, summary, overall_sentiment))
+            review_id = cursor.lastrowid
+            print(f"[INFO] Inserted new review (id={review_id}).")
+
+        # Step 3: Insert ABSA aspects
         for aspect, sentiment in aspects.items():
             cursor.execute("""
                 INSERT INTO absa_results (review_id, aspect, sentiment)
@@ -105,6 +115,10 @@ def save_review_with_absa(review, summary, overall_sentiment, aspects):
             """, (review_id, aspect, sentiment))
 
         commit()
+
+    except Exception as e:
+        print(f"[ERROR] Failed to save review: {e}")
+        get_connection().rollback()
     finally:
         cursor.close()  # ensure cursor is closed every time
 
