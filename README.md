@@ -1,7 +1,5 @@
 # Amazon Review Sentiment & ABSA Analysis System
 
-[Project Link](#) <!-- ← Replace # with your actual GitHub project URL -->
-
 ---
 
 ## 🚀 Overview
