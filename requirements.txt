@@ -5,11 +5,12 @@ transformers
 spacy
 rapidfuzz
 ollama
-torch
 pymysql
 python-dotenv
 sentencepiece
 protobuf
+# torch is installed separately in the Dockerfile from the CPU wheel index.
+# For local dev (no Docker): pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # commented libraries are not needed in docker. You can install them if you pull this from git
 #numpy

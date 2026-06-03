@@ -1,0 +1,121 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Amazon Review Sentiment & ABSA — Docker Compose
+#
+# Services
+# ────────
+#   db      — MySQL 8.0 (schema auto-applied on first boot)
+#   app     — Flask / Gunicorn inference server
+#   ollama  — Local LLM server (optional; comment out if not needed)
+#
+# Quick start
+# ───────────
+#   1. cp .env.example .env   # then fill in your passwords
+#   2. Ensure best_model.keras and tokenizer.pkl are in the project root
+#   3. docker compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── MySQL ──────────────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: absa_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      ${DB_NAME:-nlp_app_db}
+      MYSQL_USER:          ${DB_USER:-absa_user}
+      MYSQL_PASSWORD:      ${DB_PASSWORD:-absa_password}
+    ports:
+      - "3307:3306"           # 3307 on host to avoid conflicts with local MySQL
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./nlp_app_db.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    networks:
+      - absa_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${DB_USER:-absa_user}",
+             "--password=${DB_PASSWORD:-absa_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Ollama (optional LLM sidecar) ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: absa_ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - absa_net
+    # Pull the model on first startup; remove if you pre-pull manually.
+    # The entrypoint override starts the server, waits, then pulls.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        sleep 5
+        ollama pull llama3.2
+        wait
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s   # pulling the model can take a while
+
+  # ── Flask / Gunicorn app ───────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: absa_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started   # app gracefully falls back if Ollama isn't ready
+    environment:
+      DB_HOST:          db
+      DB_USER:          ${DB_USER:-absa_user}
+      DB_PASSWORD:      ${DB_PASSWORD:-absa_password}
+      DB_NAME:          ${DB_NAME:-nlp_app_db}
+      OLLAMA_BASE_URL:  http://ollama:11434
+      OLLAMA_HOST:      http://ollama:11434   # used by the ollama Python client
+      TF_ENABLE_ONEDNN_OPTS: "0"
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    ports:
+      - "${APP_PORT:-5000}:5000"
+    volumes:
+      # Mount large model artifacts (not tracked in git, live in project root)
+      - ./best_model.keras:/app/best_model.keras:ro
+      - ./tokenizer.pkl:/app/tokenizer.pkl:ro
+      # Optional: mount source for live-reload in dev (comment out in prod)
+      # - .:/app
+    networks:
+      - absa_net
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s    # TF model loading takes time
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  absa_net:
+    driver: bridge
