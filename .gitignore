@@ -210,3 +210,7 @@ __marimo__/
 *.keras
 *.pkl
 *.h5
+
+# Personal/internal docs (not for public GitHub)
+interview-prep/
+documentation/
